@@ -1,0 +1,103 @@
+"""Prompt construction utilities for LLM-guided NAS reasoning."""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List
+
+
+class PromptBuilder:
+    """Builds structured prompts for proposing and refining architectures.
+
+    PromptBuilder standardizes prompt formatting so the agent can be swapped
+    across LLM providers while preserving RA-NAS prompt semantics.
+    """
+
+    def __init__(self, search_space: Dict[str, Any], top_k: int) -> None:
+        """Initializes prompt builder.
+
+        Args:
+            search_space: Search-space dictionary including constraints.
+            top_k: Number of memory entries to include in prompts.
+        """
+        self.search_space = search_space
+        self.top_k = top_k
+
+    def _schema_text(self) -> str:
+        """Returns architecture JSON schema derived from the configured search space.
+
+        Returns:
+            str: Required output schema description.
+        """
+        ss = self.search_space.get("search_space", {})
+        activation_opts = "|".join(ss.get("activations", ["relu", "gelu", "silu"]))
+        pooling_opts = "|".join(ss.get("pooling", ["max", "avg"]))
+        return (
+            "{\n"
+            '  "num_layers": int,\n'
+            '  "filters": [int, ...],\n'
+            '  "kernels": [int, ...],\n'
+            f'  "activation": "{activation_opts}",\n'
+            '  "use_batchnorm": bool,\n'
+            '  "use_dropout": bool,\n'
+            '  "dropout_rate": float,\n'
+            '  "use_skip_connections": bool,\n'
+            f'  "pooling": "{pooling_opts}"\n'
+            "}"
+        )
+
+    def build_proposal_prompt(self, memory_summary: List[Dict[str, Any]]) -> str:
+        """Builds a prompt requesting a fresh architecture proposal.
+
+        Args:
+            memory_summary: Top-k compact history entries.
+
+        Returns:
+            str: Full user prompt for architecture proposal.
+        """
+        payload = memory_summary[: self.top_k]
+        return (
+            "You are an NAS reasoning agent.\n"
+            "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n\n"
+            "Architecture JSON schema:\n"
+            f"{self._schema_text()}\n\n"
+            "Search space and constraints:\n"
+            f"{json.dumps(self.search_space, indent=2)}\n\n"
+            "Top-k prior results (architecture, val_accuracy):\n"
+            f"{json.dumps(payload, indent=2)}\n\n"
+            "Respond ONLY with a JSON object. No explanation."
+        )
+
+    def build_refinement_prompt(
+        self,
+        arch: Dict[str, Any],
+        metrics: Dict[str, Any],
+        memory_summary: List[Dict[str, Any]],
+    ) -> str:
+        """Builds a prompt requesting an improved variant of an architecture.
+
+        Args:
+            arch: Current architecture to refine.
+            metrics: Feedback metrics from training/evaluation.
+            memory_summary: Top-k memory records for in-context guidance.
+
+        Returns:
+            str: Full user prompt for refinement.
+        """
+        payload = memory_summary[: self.top_k]
+        return (
+            "You are an NAS reasoning agent.\n"
+            "Refine the given architecture to improve validation performance while staying valid.\n\n"
+            "Architecture JSON schema:\n"
+            f"{self._schema_text()}\n\n"
+            "Search space and constraints:\n"
+            f"{json.dumps(self.search_space, indent=2)}\n\n"
+            "Architecture to refine:\n"
+            f"{json.dumps(arch, indent=2)}\n\n"
+            "Performance feedback:\n"
+            f"{json.dumps(metrics, indent=2)}\n\n"
+            "Top-k prior results (architecture, val_accuracy):\n"
+            f"{json.dumps(payload, indent=2)}\n\n"
+            "Respond ONLY with a JSON object. No explanation."
+        )
+

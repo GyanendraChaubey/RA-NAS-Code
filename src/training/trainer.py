@@ -1,0 +1,246 @@
+"""Training loop implementation for RA-NAS architecture candidates."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
+import torch
+import torch.nn as nn
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
+from tqdm import tqdm
+
+from src.evaluation.metrics import accuracy
+from src.training.early_stopping import EarlyStopping
+
+
+class Trainer:
+    """Trains a candidate architecture with configurable optimization settings.
+
+    Trainer is intentionally model-agnostic and fully config-driven so it can
+    be reused across RA-NAS variants and ablation settings.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        config: Dict[str, Any],
+        device: str,
+        experiment_dir: Path,
+        logger: Any,
+    ) -> None:
+        """Initializes trainer state and optimization components.
+
+        Args:
+            model: Model to train.
+            config: Merged config dictionary.
+            device: Target device string.
+            experiment_dir: Directory for checkpoints.
+            logger: Logger instance.
+        """
+        self.model = model
+        self.config = config
+        self.device = device
+        self.experiment_dir = Path(experiment_dir)
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = logger
+
+        training_cfg = config["training"]
+        self.epochs = int(training_cfg["epochs"])
+        self.learning_rate = float(training_cfg["learning_rate"])
+        self.weight_decay = float(training_cfg["weight_decay"])
+        self.scheduler_type = str(training_cfg.get("scheduler", "none")).lower()
+        self.save_best_only = bool(config["experiment"].get("save_best_only", True))
+
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        self.criterion = nn.CrossEntropyLoss()
+        self.scheduler = self._build_scheduler()
+        self.monitor_mode = str(config.get("early_stopping", {}).get("mode", "max"))
+        self.best_score = float("-inf") if self.monitor_mode == "max" else float("inf")
+        self.best_epoch = 0
+
+        es_cfg = config.get("early_stopping", {})
+        self.early_stopping = None
+        if bool(es_cfg.get("enabled", False)):
+            self.early_stopping = EarlyStopping(
+                patience=int(es_cfg["patience"]),
+                mode=str(es_cfg["mode"]),
+                monitor=str(es_cfg["monitor"]),
+            )
+
+    def _build_scheduler(self) -> Any:
+        """Builds learning-rate scheduler from config.
+
+        Returns:
+            Any: Scheduler object or None.
+
+        Raises:
+            ValueError: If scheduler type is unsupported.
+        """
+        if self.scheduler_type == "none":
+            return None
+        if self.scheduler_type == "cosine":
+            return CosineAnnealingLR(self.optimizer, T_max=self.epochs)
+        if self.scheduler_type == "step":
+            step_size = max(1, self.epochs // 3)
+            return StepLR(self.optimizer, step_size=step_size, gamma=0.5)
+        raise ValueError(
+            f"Unsupported scheduler '{self.scheduler_type}'. "
+            "Use one of: cosine, step, none."
+        )
+
+    def train(self, train_loader: Any, val_loader: Any) -> Dict[str, Any]:
+        """Runs the complete training loop for one architecture.
+
+        Args:
+            train_loader: Training dataloader.
+            val_loader: Validation dataloader.
+
+        Returns:
+            Dict[str, Any]: Final and historical training metrics.
+        """
+        history = []
+        for epoch in range(1, self.epochs + 1):
+            train_loss, train_acc = self._train_epoch(train_loader)
+            val_loss, val_acc = self._val_epoch(val_loader)
+
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+            epoch_metrics = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "train_accuracy": train_acc,
+                "val_loss": val_loss,
+                "val_accuracy": val_acc,
+            }
+            history.append(epoch_metrics)
+            self._save_checkpoint(epoch=epoch, metrics=epoch_metrics)
+
+            self.logger.info(
+                (
+                    "Epoch %d/%d | train_loss=%.4f train_acc=%.4f "
+                    "val_loss=%.4f val_acc=%.4f"
+                ),
+                epoch,
+                self.epochs,
+                train_loss,
+                train_acc,
+                val_loss,
+                val_acc,
+            )
+
+            if self.early_stopping and self.early_stopping.step(epoch_metrics):
+                self.logger.info("Early stopping triggered at epoch %d.", epoch)
+                break
+
+        last = history[-1]
+        return {
+            "train_loss": float(last["train_loss"]),
+            "train_accuracy": float(last["train_accuracy"]),
+            "val_loss": float(last["val_loss"]),
+            "val_accuracy": float(last["val_accuracy"]),
+            "best_epoch": int(self.best_epoch),
+            "history": history,
+        }
+
+    def _train_epoch(self, loader: Any) -> Tuple[float, float]:
+        """Runs one training epoch.
+
+        Args:
+            loader: Training dataloader.
+
+        Returns:
+            Tuple[float, float]: Average loss and top-1 accuracy.
+        """
+        self.model.train()
+        running_loss = 0.0
+        running_correct = 0.0
+        running_total = 0
+
+        progress = tqdm(loader, desc="train", leave=False)
+        for inputs, targets in progress:
+            inputs = inputs.to(self.device)
+            targets = targets.to(self.device)
+
+            self.optimizer.zero_grad(set_to_none=True)
+            outputs = self.model(inputs)
+            loss = self.criterion(outputs, targets)
+            loss.backward()
+            self.optimizer.step()
+
+            batch_size = targets.size(0)
+            acc = accuracy(outputs, targets, topk=(1,))["top1"]
+            running_loss += float(loss.item()) * batch_size
+            running_correct += (acc / 100.0) * batch_size
+            running_total += batch_size
+
+        avg_loss = running_loss / max(1, running_total)
+        avg_acc = (running_correct / max(1, running_total)) * 100.0
+        return avg_loss, avg_acc
+
+    def _val_epoch(self, loader: Any) -> Tuple[float, float]:
+        """Runs one validation epoch.
+
+        Args:
+            loader: Validation dataloader.
+
+        Returns:
+            Tuple[float, float]: Average loss and top-1 accuracy.
+        """
+        self.model.eval()
+        running_loss = 0.0
+        running_correct = 0.0
+        running_total = 0
+
+        with torch.no_grad():
+            for inputs, targets in loader:
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
+
+                batch_size = targets.size(0)
+                acc = accuracy(outputs, targets, topk=(1,))["top1"]
+                running_loss += float(loss.item()) * batch_size
+                running_correct += (acc / 100.0) * batch_size
+                running_total += batch_size
+
+        avg_loss = running_loss / max(1, running_total)
+        avg_acc = (running_correct / max(1, running_total)) * 100.0
+        return avg_loss, avg_acc
+
+    def _save_checkpoint(self, epoch: int, metrics: Dict[str, Any]) -> None:
+        """Saves checkpoint according to monitored metric and policy.
+
+        Args:
+            epoch: Current epoch index.
+            metrics: Current epoch metrics dictionary.
+        """
+        monitor = str(self.config.get("early_stopping", {}).get("monitor", "val_accuracy"))
+        current = float(metrics.get(monitor, float("-inf")))
+        improved = (
+            current > self.best_score
+            if self.monitor_mode == "max"
+            else current < self.best_score
+        )
+
+        if improved:
+            self.best_score = current
+            self.best_epoch = epoch
+
+        if self.save_best_only and not improved:
+            return
+
+        checkpoint = {
+            "epoch": epoch,
+            "metrics": metrics,
+            "arch_config": getattr(self.model, "arch_config", {}),
+            "state_dict": self.model.state_dict(),
+        }
+        checkpoint_path = self.experiment_dir / "model.pt"
+        torch.save(checkpoint, checkpoint_path)
