@@ -46,6 +46,20 @@ class PromptBuilder:
             "}"
         )
 
+    def _output_schema_text(self) -> str:
+        """Returns the full response schema including structured reasoning wrapper."""
+        return (
+            "{\n"
+            '  "reasoning": {\n'
+            '    "observations": "What patterns do the prior results reveal?",\n'
+            '    "hypothesis": "Why should this architecture perform better?",\n'
+            '    "changes": "What specific changes are being made and why?",\n'
+            '    "risks": "What challenges might this architecture face and how are they mitigated?"\n'
+            '  },\n'
+            '  "architecture": ' + self._schema_text() + "\n"
+            "}"
+        )
+
     def build_proposal_prompt(self, memory_summary: List[Dict[str, Any]]) -> str:
         """Builds a prompt requesting a fresh architecture proposal.
 
@@ -59,13 +73,12 @@ class PromptBuilder:
         return (
             "You are an NAS reasoning agent.\n"
             "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n\n"
-            "Architecture JSON schema:\n"
-            f"{self._schema_text()}\n\n"
+            "Required output format (respond ONLY with this JSON, no text outside it):\n"
+            f"{self._output_schema_text()}\n\n"
             "Search space and constraints:\n"
             f"{json.dumps(self.search_space, indent=2)}\n\n"
             "Top-k prior results (architecture, val_accuracy):\n"
-            f"{json.dumps(payload, indent=2)}\n\n"
-            "Respond ONLY with a JSON object. No explanation."
+            f"{json.dumps(payload, indent=2)}\n"
         )
 
     def build_refinement_prompt(
@@ -88,8 +101,8 @@ class PromptBuilder:
         return (
             "You are an NAS reasoning agent.\n"
             "Refine the given architecture to improve validation performance while staying valid.\n\n"
-            "Architecture JSON schema:\n"
-            f"{self._schema_text()}\n\n"
+            "Required output format (respond ONLY with this JSON, no text outside it):\n"
+            f"{self._output_schema_text()}\n\n"
             "Search space and constraints:\n"
             f"{json.dumps(self.search_space, indent=2)}\n\n"
             "Architecture to refine:\n"
@@ -97,7 +110,6 @@ class PromptBuilder:
             "Performance feedback:\n"
             f"{json.dumps(metrics, indent=2)}\n\n"
             "Top-k prior results (architecture, val_accuracy):\n"
-            f"{json.dumps(payload, indent=2)}\n\n"
-            "Respond ONLY with a JSON object. No explanation."
+            f"{json.dumps(payload, indent=2)}\n"
         )
 

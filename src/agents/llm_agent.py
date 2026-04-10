@@ -282,6 +282,26 @@ class LLMAgent:
                 parsed = json.loads(candidate)
                 if not isinstance(parsed, dict):
                     raise ValueError("LLM response JSON must be an object.")
+                if "reasoning" in parsed and "architecture" in parsed:
+                    reasoning = parsed["reasoning"]
+                    if isinstance(reasoning, dict):
+                        self.logger.info(
+                            "\n=== LLM Reasoning ===\n"
+                            "  Observations : %s\n"
+                            "  Hypothesis   : %s\n"
+                            "  Changes      : %s\n"
+                            "  Risks        : %s\n"
+                            "=====================",
+                            reasoning.get("observations", "—"),
+                            reasoning.get("hypothesis", "—"),
+                            reasoning.get("changes", "—"),
+                            reasoning.get("risks", "—"),
+                        )
+                    else:
+                        self.logger.info(
+                            "\n=== LLM Reasoning ===\n%s\n=====================", reasoning
+                        )
+                    parsed = parsed["architecture"]
                 return parsed
             except json.JSONDecodeError:
                 continue
