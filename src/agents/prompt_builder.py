@@ -27,19 +27,19 @@ class PromptBuilder:
         """Returns the architecture-only JSON schema including all search dimensions."""
         ss = self.search_space.get("search_space", {})
         activation_opts = "|".join(ss.get("activations", ["relu", "gelu", "silu"]))
-        pooling_opts = "|".join(ss.get("pooling", ["max", "avg"]))
         return (
             "{\n"
-            '  "num_layers": int,\n'
-            '  "filters": [int, ...],\n'
-            '  "kernels": [int, ...],\n'
+            '  "num_layers": int,          // number of stages (2–8)\n'
+            '  "filters": [int, ...],      // output channels per stage, e.g. [64,128,256]\n'
+            '  "kernels": [int, ...],      // kernel size per stage: 3 or 5\n'
+            '  "block_depths": [int, ...], // bottleneck blocks per stage: 1, 2, or 3\n'
             f'  "activation": "{activation_opts}",\n'
-            '  "use_batchnorm": bool,\n'
+            '  "use_batchnorm": true,      // always true\n'
             '  "use_dropout": bool,\n'
-            '  "dropout_rate": float,\n'
-            '  "use_skip_connections": bool,\n'
+            '  "dropout_rate": float,      // 0.0–0.3, 0.0 when use_dropout=false\n'
+            '  "use_skip_connections": true, // always true (bottleneck design)\n'
             '  "use_se_blocks": bool,\n'
-            f'  "pooling": "{pooling_opts}"\n'
+            '  "pooling": "avg"            // always avg\n'
             "}"
         )
 
@@ -50,31 +50,11 @@ class PromptBuilder:
             '  "reasoning": {\n'
             '    "observations": "What patterns do the prior results reveal?",\n'
             '    "hypothesis": "Why should this architecture perform better?",\n'
-            '    "changes": "What specific changes are being made and why?",\n'
+            '    "changes": "What specific changes are being made and why (filters, block_depths, kernels, SE)?",\n'
             '    "risks": "What challenges might this architecture face and how are they mitigated?"\n'
             '  },\n'
             '  "predicted_val_accuracy": float,\n'
             '  "architecture": ' + self._schema_text() + "\n"
-            "}"
-        )
-
-    def _schema_text(self) -> str:
-        """Returns the architecture-only JSON schema."""
-        ss = self.search_space.get("search_space", {})
-        activation_opts = "|".join(ss.get("activations", ["relu", "gelu", "silu"]))
-        pooling_opts = "|".join(ss.get("pooling", ["max", "avg"]))
-        return (
-            "{\n"
-            '  "num_layers": int,\n'
-            '  "filters": [int, ...],\n'
-            '  "kernels": [int, ...],\n'
-            f'  "activation": "{activation_opts}",\n'
-            '  "use_batchnorm": bool,\n'
-            '  "use_dropout": bool,\n'
-            '  "dropout_rate": float,\n'
-            '  "use_skip_connections": bool,\n'
-            '  "use_se_blocks": bool,\n'
-            f'  "pooling": "{pooling_opts}"\n'
             "}"
         )
 
@@ -91,11 +71,16 @@ class PromptBuilder:
                 + "\n"
             )
         return (
-            "You are an NAS reasoning agent.\n"
-            "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n"
-            "Key insight: skip connections (residual additions between layers) and SE blocks "
-            "(channel attention) consistently improve accuracy in modern CNNs — prefer "
-            "use_skip_connections=true and use_se_blocks=true unless you have a specific reason not to.\n"
+            "You are an NAS reasoning agent searching for high-accuracy ResNet-style CNNs on CIFAR-10.\n"
+            "The architecture uses pre-activation ResNet bottleneck blocks. Key searchable dimensions:\n"
+            "  - num_layers: number of stages (each stage = stack of bottleneck blocks)\n"
+            "  - filters: output channels per stage (64/128/256/512)\n"
+            "  - block_depths: how many bottleneck blocks per stage (1/2/3)\n"
+            "  - kernels: 3x3 or 5x5 per stage\n"
+            "  - use_se_blocks: channel-attention — prefer True for higher accuracy\n"
+            "  - use_dropout: light dropout (0.1–0.2) helps regularisation\n"
+            "Architecture template for 93%+ accuracy: 4 stages, filters=[64,128,256,512], "
+            "block_depths=[2,2,2,2], kernels=[3,3,3,3], use_se_blocks=True.\n"
             + diversity_note
             + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"
@@ -123,10 +108,11 @@ class PromptBuilder:
                 + "\n"
             )
         return (
-            "You are an NAS reasoning agent.\n"
-            "Refine the given architecture to improve validation performance while staying valid.\n"
-            "Key insight: skip connections and SE blocks are high-value — if the current "
-            "architecture does not use them, consider enabling them as your primary change.\n"
+            "You are an NAS reasoning agent searching for high-accuracy ResNet-style CNNs on CIFAR-10.\n"
+            "Refine the given architecture to improve validation performance.\n"
+            "Focus on: increasing block_depths for more capacity, wider filters (256/512), "
+            "SE blocks for channel attention, and 3x3 kernels (most efficient).\n"
+            "If val_accuracy is already high (>90%), focus on block_depths and use_se_blocks.\n"
             + diversity_note
             + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"

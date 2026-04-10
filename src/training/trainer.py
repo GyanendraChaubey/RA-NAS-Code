@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
+from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
+from torchvision.transforms import RandAugment
 from tqdm import tqdm
 
 from src.evaluation.metrics import accuracy
@@ -110,6 +112,22 @@ class Trainer:
         self.cutout_length = int(aug_cfg.get("cutout_length", 16))
         self.use_mixup = bool(aug_cfg.get("mixup", True))
         self.mixup_alpha = float(aug_cfg.get("mixup_alpha", 0.2))
+        self.use_randaugment = bool(aug_cfg.get("randaugment", True))
+        if self.use_randaugment:
+            self._randaugment = RandAugment(num_ops=2, magnitude=9)
+        else:
+            self._randaugment = None
+
+        # Label smoothing
+        label_smoothing = float(training_cfg.get("label_smoothing", 0.1))
+
+        # SWA
+        swa_cfg = training_cfg.get("swa", {})
+        self.use_swa = bool(swa_cfg.get("enabled", True))
+        self.swa_start_frac = float(swa_cfg.get("start_frac", 0.75))  # start SWA at 75% of training
+        self.swa_lr = float(swa_cfg.get("lr", 0.05))
+        self._swa_model: AveragedModel | None = None
+        self._swa_scheduler: SWALR | None = None
 
         optimizer_type = str(training_cfg.get("optimizer", "sgd")).lower()
         if optimizer_type == "sgd":
@@ -127,7 +145,7 @@ class Trainer:
                 weight_decay=self.weight_decay,
             )
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.scheduler = self._build_scheduler()
         self.monitor_mode = str(config.get("early_stopping", {}).get("mode", "max"))
         self.best_score = float("-inf") if self.monitor_mode == "max" else float("inf")
@@ -192,12 +210,24 @@ class Trainer:
         Returns:
             Dict[str, Any]: Final and historical training metrics.
         """
+        # Initialise SWA components here (after optimizer is built)
+        swa_start_epoch = max(1, int(self.epochs * self.swa_start_frac))
+        if self.use_swa:
+            self._swa_model = AveragedModel(self.model)
+            self._swa_scheduler = SWALR(
+                self.optimizer, swa_lr=self.swa_lr,
+                anneal_epochs=max(1, self.epochs - swa_start_epoch),
+            )
+
         history = []
         for epoch in range(1, self.epochs + 1):
             train_loss, train_acc = self._train_epoch(train_loader)
             val_loss, val_acc = self._val_epoch(val_loader)
 
-            if self.scheduler is not None:
+            if self.use_swa and epoch >= swa_start_epoch:
+                self._swa_model.update_parameters(self.model)
+                self._swa_scheduler.step()
+            elif self.scheduler is not None:
                 self.scheduler.step()
 
             epoch_metrics = {
@@ -227,6 +257,13 @@ class Trainer:
                 self.logger.info("Early stopping triggered at epoch %d.", epoch)
                 break
 
+        # Finalise SWA: update BatchNorm stats with averaged weights
+        if self.use_swa and self._swa_model is not None:
+            update_bn(train_loader, self._swa_model, device=self.device)
+            # Swap model weights to SWA weights for downstream evaluation
+            self.model.load_state_dict(self._swa_model.module.state_dict())
+            self.logger.info("SWA weights applied.")
+
         last = history[-1]
         return {
             "train_loss": float(last["train_loss"]),
@@ -255,6 +292,13 @@ class Trainer:
         for inputs, targets in progress:
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
+
+            # RandAugment (applied per-sample on the GPU tensor batch)
+            if self._randaugment is not None:
+                # RandAugment expects uint8 tensors; convert, augment, reconvert
+                imgs_u8 = (inputs * 255).clamp(0, 255).byte()
+                imgs_u8 = torch.stack([self._randaugment(img) for img in imgs_u8])
+                inputs = imgs_u8.float() / 255.0
 
             # CutOut: zero out random square patches
             if self.use_cutout:

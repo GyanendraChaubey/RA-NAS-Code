@@ -169,7 +169,6 @@ class NASController:
         if len(self._screening_buffer) >= 2:
             a, b = self._screening_buffer[-2], self._screening_buffer[-1]
             winner = a if a["screen_val_acc"] >= b["screen_val_acc"] else b
-            loser_tag = "b" if winner is a else "a"
             self.logger.info(
                 "Screening: iter %d acc=%.4f vs iter %d acc=%.4f — full-training %s option (acc=%.4f)",
                 iteration - 1, a["screen_val_acc"],
@@ -180,17 +179,18 @@ class NASController:
             self._screening_buffer.clear()
             win_arch = winner["arch"]
             win_dir = winner["iteration_dir"]
+            win_model = build_model(arch_config=win_arch, num_classes=self.num_classes, device=self.device)
+            full_trainer = self.trainer_factory(win_model, win_dir)
+            train_metrics = full_trainer.train(train_loader=self.train_loader, val_loader=self.val_loader)
+            evaluator = self.evaluator_factory(win_model)
+            eval_metrics = evaluator.evaluate(self.val_loader)
+            return win_arch, train_metrics, eval_metrics
         else:
-            # Odd iteration: buffer and do a full train of current arch
-            win_arch = arch
-            win_dir = iteration_dir
-
-        win_model = build_model(arch_config=win_arch, num_classes=self.num_classes, device=self.device)
-        full_trainer = self.trainer_factory(win_model, win_dir)
-        train_metrics = full_trainer.train(train_loader=self.train_loader, val_loader=self.val_loader)
-        evaluator = self.evaluator_factory(win_model)
-        eval_metrics = evaluator.evaluate(self.val_loader)
-        return win_arch, train_metrics, eval_metrics
+            # Odd iteration: screened only — return screening metrics directly
+            # (no extra full-train; saves wall-clock so more archs can be explored)
+            evaluator = self.evaluator_factory(model)
+            eval_metrics = evaluator.evaluate(self.val_loader)
+            return arch, screen_metrics, eval_metrics
 
     def _log_iteration(self, iteration: int, arch: Dict[str, Any], metrics: Dict[str, Any]) -> None:
         """Logs a concise summary for a single NAS iteration.

@@ -23,8 +23,8 @@ from src.utils.logger import get_logger
 _CONSTRAINTS = {
     "min_layers": 2,
     "max_layers": 3,
-    "min_filters": 16,
-    "max_filters": 32,
+    "min_filters": 64,
+    "max_filters": 128,
     "allowed_activations": ["relu"],
     "allowed_kernels": [3],
 }
@@ -33,8 +33,17 @@ _TRAIN_CFG = {
     "training": {
         "epochs": 1,
         "learning_rate": 0.01,
+        "momentum": 0.9,
         "weight_decay": 1e-4,
+        "optimizer": "sgd",
         "scheduler": "none",
+        "warmup_epochs": 0,
+        "augmentation": {
+            "cutout": False,
+            "mixup": False,
+            "randaugment": False,
+        },
+        "swa": {"enabled": False},
     },
     "early_stopping": {
         "enabled": False,

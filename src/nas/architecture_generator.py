@@ -98,13 +98,14 @@ class ArchitectureGenerator:
             "num_layers": num_layers,
             "filters": [self._rng.choice(filter_choices) for _ in range(num_layers)],
             "kernels": [self._rng.choice(kernel_choices) for _ in range(num_layers)],
+            "block_depths": [self._rng.choice(self.search_space["block_depths"]) for _ in range(num_layers)],
             "activation": self._rng.choice(activation_choices),
-            "use_batchnorm": self._rng.choice(self.search_space["use_batchnorm"]),
+            "use_batchnorm": True,
             "use_dropout": use_dropout,
             "dropout_rate": dropout_rate,
-            "use_skip_connections": self._rng.choice(self.search_space["use_skip_connections"]),
+            "use_skip_connections": True,
             "use_se_blocks": self._rng.choice(self.search_space.get("use_se_blocks", [True, False])),
-            "pooling": self._rng.choice(self.search_space["pooling"]),
+            "pooling": "avg",
         }
         self.validate(arch)
         return arch
@@ -134,12 +135,10 @@ class ArchitectureGenerator:
             "num_layers",
             "filters",
             "kernels",
+            "block_depths",
             "activation",
-            "use_batchnorm",
             "use_dropout",
-            "use_skip_connections",
             "use_se_blocks",
-            "pooling",
         ]
         filter_choices = self._filter_choices()
         kernel_choices = self._kernel_choices()
@@ -159,18 +158,23 @@ class ArchitectureGenerator:
                     current_filters.append(self._rng.choice(filter_choices))
                 while len(current_kernels) < new_depth:
                     current_kernels.append(self._rng.choice(kernel_choices))
+                current_depths = mutated.get("block_depths", [])[:new_depth]
+                while len(current_depths) < new_depth:
+                    current_depths.append(self._rng.choice(self.search_space["block_depths"]))
                 mutated["filters"] = current_filters
                 mutated["kernels"] = current_kernels
+                mutated["block_depths"] = current_depths
             elif field == "filters":
                 idx = self._rng.randrange(mutated["num_layers"])
                 mutated["filters"][idx] = self._rng.choice(filter_choices)
             elif field == "kernels":
                 idx = self._rng.randrange(mutated["num_layers"])
                 mutated["kernels"][idx] = self._rng.choice(kernel_choices)
+            elif field == "block_depths":
+                idx = self._rng.randrange(mutated["num_layers"])
+                mutated["block_depths"][idx] = self._rng.choice(self.search_space["block_depths"])
             elif field == "activation":
                 mutated["activation"] = self._rng.choice(activation_choices)
-            elif field == "use_batchnorm":
-                mutated["use_batchnorm"] = not mutated["use_batchnorm"]
             elif field == "use_dropout":
                 mutated["use_dropout"] = not mutated["use_dropout"]
                 mutated["dropout_rate"] = (
@@ -184,12 +188,13 @@ class ArchitectureGenerator:
                     if mutated["use_dropout"]
                     else 0.0
                 )
-            elif field == "use_skip_connections":
-                mutated["use_skip_connections"] = not mutated["use_skip_connections"]
             elif field == "use_se_blocks":
                 mutated["use_se_blocks"] = not mutated.get("use_se_blocks", False)
-            elif field == "pooling":
-                mutated["pooling"] = self._rng.choice(self.search_space["pooling"])
+
+            # Fixed fields — always True/avg in bottleneck design
+            mutated["use_batchnorm"] = True
+            mutated["use_skip_connections"] = True
+            mutated["pooling"] = "avg"
 
         self.validate(mutated)
         return mutated

@@ -11,15 +11,16 @@ def test_memory_top_k_and_roundtrip(tmp_path: Path) -> None:
     for idx in range(10):
         arch = {
             "num_layers": 2,
-            "filters": [16, 32],
+            "filters": [64, 128],
             "kernels": [3, 3],
+            "block_depths": [2, 2],
             "activation": "relu",
             "use_batchnorm": True,
             "use_dropout": False,
             "dropout_rate": 0.0,
-            "use_skip_connections": False,
-        "use_se_blocks": False,
-            "pooling": "max",
+            "use_skip_connections": True,
+            "use_se_blocks": False,
+            "pooling": "avg",
         }
         metrics = {"val_accuracy": float(idx), "val_loss": 10.0 - idx}
         memory.add(arch=arch, metrics=metrics)

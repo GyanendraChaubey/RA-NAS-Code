@@ -43,24 +43,34 @@ def test_trainer_smoke(tmp_path: Path) -> None:
     """Runs two epochs and checks metric structure and loss trend."""
     arch = {
         "num_layers": 2,
-        "filters": [16, 32],
+        "filters": [64, 128],
         "kernels": [3, 3],
+        "block_depths": [1, 1],
         "activation": "relu",
         "use_batchnorm": True,
         "use_dropout": False,
         "dropout_rate": 0.0,
-        "use_skip_connections": False,
+        "use_skip_connections": True,
         "use_se_blocks": False,
-        "pooling": "max",
+        "pooling": "avg",
     }
     config = {
         "training": {
             "epochs": 2,
             "batch_size": 32,
-            "learning_rate": 0.001,
+            "learning_rate": 0.01,
+            "momentum": 0.9,
             "weight_decay": 1e-4,
+            "optimizer": "sgd",
             "scheduler": "none",
+            "warmup_epochs": 0,
             "seed": 42,
+            "augmentation": {
+                "cutout": False,
+                "mixup": False,
+                "randaugment": False,
+            },
+            "swa": {"enabled": False},
         },
         "early_stopping": {
             "enabled": False,

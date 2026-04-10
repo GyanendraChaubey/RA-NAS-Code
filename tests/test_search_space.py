@@ -9,8 +9,8 @@ def _constraints():
     return {
         "min_layers": 2,
         "max_layers": 6,
-        "min_filters": 16,
-        "max_filters": 256,
+        "min_filters": 64,
+        "max_filters": 512,
         "allowed_activations": ["relu", "gelu", "silu"],
         "allowed_kernels": [3, 5],
     }
@@ -19,15 +19,16 @@ def _constraints():
 def _valid_arch():
     return {
         "num_layers": 3,
-        "filters": [32, 64, 128],
+        "filters": [64, 128, 256],
         "kernels": [3, 3, 5],
+        "block_depths": [2, 2, 2],
         "activation": "relu",
         "use_batchnorm": True,
         "use_dropout": True,
         "dropout_rate": 0.2,
         "use_skip_connections": True,
         "use_se_blocks": False,
-        "pooling": "max",
+        "pooling": "avg",
     }
 
 
@@ -47,7 +48,7 @@ def test_invalid_architecture_raises() -> None:
 def test_constraint_filter_range_enforced() -> None:
     """Constraint bounds should reject out-of-range filter values."""
     bad = _valid_arch()
-    bad["filters"] = [8, 64, 128]
+    bad["filters"] = [32, 64, 128]  # 32 is below min_filters=64
     with pytest.raises(ValueError):
         validate_architecture(bad, _constraints())
 

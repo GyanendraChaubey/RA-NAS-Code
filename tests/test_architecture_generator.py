@@ -10,8 +10,8 @@ def _make_generator(seed: int = 0) -> ArchitectureGenerator:
     constraints = {
         "min_layers": 2,
         "max_layers": 6,
-        "min_filters": 16,
-        "max_filters": 256,
+        "min_filters": 64,
+        "max_filters": 512,
         "allowed_activations": ["relu", "gelu", "silu"],
         "allowed_kernels": [3, 5],
     }
@@ -21,15 +21,16 @@ def _make_generator(seed: int = 0) -> ArchitectureGenerator:
 def _valid_base_arch() -> dict:
     return {
         "num_layers": 3,
-        "filters": [32, 64, 128],
+        "filters": [64, 128, 256],
         "kernels": [3, 5, 3],
+        "block_depths": [2, 2, 2],
         "activation": "relu",
         "use_batchnorm": True,
         "use_dropout": False,
         "dropout_rate": 0.0,
-        "use_skip_connections": False,
+        "use_skip_connections": True,
         "use_se_blocks": False,
-        "pooling": "max",
+        "pooling": "avg",
     }
 
 
@@ -53,12 +54,13 @@ def test_sample_random_respects_layer_bounds() -> None:
 
 
 def test_sample_random_list_lengths_match_num_layers() -> None:
-    """filters and kernels lists must have exactly num_layers entries."""
+    """filters, kernels, and block_depths lists must have exactly num_layers entries."""
     gen = _make_generator()
     for _ in range(10):
         arch = gen.sample_random()
         assert len(arch["filters"]) == arch["num_layers"]
         assert len(arch["kernels"]) == arch["num_layers"]
+        assert len(arch["block_depths"]) == arch["num_layers"]
 
 
 def test_sample_random_is_reproducible() -> None:
@@ -97,13 +99,14 @@ def test_mutate_produces_different_arch() -> None:
 
 
 def test_mutate_list_lengths_consistent_after_depth_change() -> None:
-    """After a num_layers mutation, filters/kernels lengths must match new depth."""
+    """After a num_layers mutation, filters/kernels/block_depths lengths must match new depth."""
     gen = _make_generator(seed=99)
     for _ in range(50):
         arch = gen.sample_random()
         mutated = gen.mutate(arch, num_mutations=3)
         assert len(mutated["filters"]) == mutated["num_layers"]
         assert len(mutated["kernels"]) == mutated["num_layers"]
+        assert len(mutated["block_depths"]) == mutated["num_layers"]
 
 
 def test_mutate_num_mutations_applies_multiple_changes() -> None:
@@ -137,15 +140,15 @@ def test_sample_random_honours_filter_constraints() -> None:
     constraints = {
         "min_layers": 2,
         "max_layers": 4,
-        "min_filters": 16,
-        "max_filters": 32,  # tight upper bound
+        "min_filters": 64,
+        "max_filters": 128,  # tight upper bound
         "allowed_activations": ["relu"],
         "allowed_kernels": [3],
     }
     gen = ArchitectureGenerator(SEARCH_SPACE, constraints, seed=0)
     for _ in range(20):
         arch = gen.sample_random()
-        assert all(f <= 32 for f in arch["filters"])
+        assert all(f <= 128 for f in arch["filters"])
 
 
 def test_empty_filter_choices_raises() -> None:

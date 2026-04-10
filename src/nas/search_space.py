@@ -5,16 +5,17 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 SEARCH_SPACE: Dict[str, Any] = {
-    "num_layers": {"min": 2, "max": 8},
-    "filters_per_layer": [16, 32, 64, 128, 256, 512],
-    "kernel_sizes": [3, 5, 7],
+    "num_layers": {"min": 2, "max": 8},        # number of stages
+    "filters_per_layer": [64, 128, 256, 512],  # output channels per stage
+    "kernel_sizes": [3, 5],                    # 3x3 and 5x5 for CIFAR-32 spatial
+    "block_depths": [1, 2, 3],                 # bottleneck blocks per stage
     "activations": ["relu", "gelu", "silu"],
-    "use_batchnorm": [True, False],
+    "use_batchnorm": [True],                   # always True in bottleneck design
     "use_dropout": [True, False],
-    "dropout_rate": {"min": 0.0, "max": 0.6},
-    "use_skip_connections": [True, False],
+    "dropout_rate": {"min": 0.0, "max": 0.3},  # tighter range for residual nets
+    "use_skip_connections": [True],            # always True in bottleneck design
     "use_se_blocks": [True, False],
-    "pooling": ["max", "avg"],
+    "pooling": ["avg"],                        # avg pooling is standard for ResNets
 }
 
 
@@ -64,6 +65,7 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
         "num_layers",
         "filters",
         "kernels",
+        "block_depths",
         "activation",
         "use_batchnorm",
         "use_dropout",
@@ -87,10 +89,13 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
 
     filters = arch["filters"]
     kernels = arch["kernels"]
+    block_depths = arch["block_depths"]
     _assert(isinstance(filters, list), "filters must be a list.")
     _assert(isinstance(kernels, list), "kernels must be a list.")
+    _assert(isinstance(block_depths, list), "block_depths must be a list.")
     _assert(len(filters) == num_layers, "filters length must equal num_layers.")
     _assert(len(kernels) == num_layers, "kernels length must equal num_layers.")
+    _assert(len(block_depths) == num_layers, "block_depths length must equal num_layers.")
 
     valid_filters = _valid_filter_values(constraints)
     _assert(valid_filters, "No valid filter values available after applying constraints.")
@@ -105,6 +110,11 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
     for kernel in kernels:
         _assert(kernel in SEARCH_SPACE["kernel_sizes"], f"Kernel {kernel} not in global search space.")
         _assert(kernel in allowed_kernels, f"Kernel {kernel} not allowed by constraints.")
+
+    valid_depths = SEARCH_SPACE["block_depths"]
+    for depth in block_depths:
+        _assert(isinstance(depth, int) and depth in valid_depths,
+                f"block_depth {depth} must be one of {valid_depths}.")
 
     activation = arch["activation"]
     allowed_activations = constraints.get("allowed_activations", SEARCH_SPACE["activations"])
@@ -129,4 +139,3 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
         _assert(dropout_rate == 0.0, "dropout_rate must be 0.0 when use_dropout=False.")
 
     return True
-
