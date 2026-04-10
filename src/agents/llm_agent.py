@@ -68,9 +68,9 @@ class LLMAgent:
         self._model = str(llm_cfg.get("model", "gpt-4o"))
         provider = str(llm_cfg.get("provider", "openai")).lower()
         if not self.mock_mode:
-            if provider not in {"openai", "deepseek"}:
+            if provider not in {"openai", "deepseek", "groq"}:
                 raise ValueError(
-                    f"Unsupported llm.provider='{provider}'. Supported values: openai, deepseek."
+                    f"Unsupported llm.provider='{provider}'. Supported values: openai, deepseek, groq."
                 )
             self._init_openai_client(llm_cfg)
 

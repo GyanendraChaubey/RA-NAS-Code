@@ -1,10 +1,10 @@
 llm:
-  provider: deepseek
-  model: deepseek-chat
-  base_url: https://api.deepseek.com
+  provider: groq
+  model: llama-3.3-70b-versatile
+  base_url: https://api.groq.com/openai/v1
   temperature: 0.7
   max_tokens: 1024
-  api_key_env: DEEPSEEK_API_KEY
+  api_key_env: GROQ_API_KEY
 
 agent:
   max_iterations: 10
