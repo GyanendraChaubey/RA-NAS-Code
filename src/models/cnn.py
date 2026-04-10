@@ -154,7 +154,8 @@ class DynamicCNN(nn.Module):
                 out = block["se"](out)
             if "drop" in block:
                 out = block["drop"](out)
-            out = block["pool"](out)
+            if out.shape[-1] >= 2 and out.shape[-2] >= 2:
+                out = block["pool"](out)
 
             if self.use_skip_connections and layer_idx > 0:
                 resized = F.adaptive_avg_pool2d(residual, output_size=out.shape[-2:])
