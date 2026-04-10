@@ -9,22 +9,28 @@ training:
   batch_size: 256
   learning_rate: 0.1
   momentum: 0.9
-  weight_decay: 5e-4
+  weight_decay: 1e-3
   optimizer: sgd
   scheduler: cosine_warmup
-  warmup_epochs: 5
-  screening_epochs: 5
+  warmup_epochs: 10
+  screening_epochs: 10
+  label_smoothing: 0.1
   num_workers: 2
   seed: 42
   augmentation:
     cutout: true
-    cutout_length: 16
+    cutout_length: 8
     mixup: true
-    mixup_alpha: 0.2
+    mixup_alpha: 0.4
+    randaugment: true
+  swa:
+    enabled: true
+    start_frac: 0.75
+    lr: 0.05
 
 early_stopping:
   enabled: true
-  patience: 10
+  patience: 30
   monitor: val_accuracy
   mode: max
 
@@ -36,7 +42,7 @@ experiment:
 architecture_constraints:
   min_layers: 2
   max_layers: 8
-  min_filters: 16
+  min_filters: 64
   max_filters: 512
   allowed_activations: [relu, gelu, silu]
-  allowed_kernels: [3, 5, 7]
+  allowed_kernels: [3, 5]
