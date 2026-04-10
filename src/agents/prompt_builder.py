@@ -93,6 +93,9 @@ class PromptBuilder:
         return (
             "You are an NAS reasoning agent.\n"
             "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n"
+            "Key insight: skip connections (residual additions between layers) and SE blocks "
+            "(channel attention) consistently improve accuracy in modern CNNs — prefer "
+            "use_skip_connections=true and use_se_blocks=true unless you have a specific reason not to.\n"
             + diversity_note
             + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"
@@ -122,6 +125,8 @@ class PromptBuilder:
         return (
             "You are an NAS reasoning agent.\n"
             "Refine the given architecture to improve validation performance while staying valid.\n"
+            "Key insight: skip connections and SE blocks are high-value — if the current "
+            "architecture does not use them, consider enabling them as your primary change.\n"
             + diversity_note
             + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"
