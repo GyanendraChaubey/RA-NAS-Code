@@ -26,6 +26,7 @@ def _valid_arch():
         "use_dropout": True,
         "dropout_rate": 0.2,
         "use_skip_connections": True,
+        "use_se_blocks": False,
         "pooling": "max",
     }
 

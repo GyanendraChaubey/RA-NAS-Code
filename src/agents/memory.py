@@ -19,14 +19,19 @@ class ExperimentMemory:
         """Initializes an empty in-memory record list."""
         self._entries: List[Dict[str, Any]] = []
 
-    def add(self, arch: Dict[str, Any], metrics: Dict[str, Any]) -> None:
+    def add(self, arch: Dict[str, Any], metrics: Dict[str, Any], predicted_accuracy: float | None = None) -> None:
         """Adds a single architecture evaluation record.
 
         Args:
             arch: Architecture dictionary used for model construction.
             metrics: Evaluation metrics dictionary for that architecture.
+            predicted_accuracy: LLM's accuracy prediction before training (optional).
         """
-        self._entries.append({"arch": arch, "metrics": metrics})
+        entry: Dict[str, Any] = {"arch": arch, "metrics": metrics}
+        if predicted_accuracy is not None:
+            entry["predicted_accuracy"] = float(predicted_accuracy)
+            entry["prediction_error"] = abs(float(predicted_accuracy) - float(metrics.get("val_accuracy", 0.0)))
+        self._entries.append(entry)
 
     def get_top_k(self, k: int, metric: str = "val_accuracy") -> List[Dict[str, Any]]:
         """Returns top-k records sorted by a target metric in descending order.

@@ -103,6 +103,7 @@ class ArchitectureGenerator:
             "use_dropout": use_dropout,
             "dropout_rate": dropout_rate,
             "use_skip_connections": self._rng.choice(self.search_space["use_skip_connections"]),
+            "use_se_blocks": self._rng.choice(self.search_space.get("use_se_blocks", [True, False])),
             "pooling": self._rng.choice(self.search_space["pooling"]),
         }
         self.validate(arch)
@@ -137,6 +138,7 @@ class ArchitectureGenerator:
             "use_batchnorm",
             "use_dropout",
             "use_skip_connections",
+            "use_se_blocks",
             "pooling",
         ]
         filter_choices = self._filter_choices()
@@ -184,6 +186,8 @@ class ArchitectureGenerator:
                 )
             elif field == "use_skip_connections":
                 mutated["use_skip_connections"] = not mutated["use_skip_connections"]
+            elif field == "use_se_blocks":
+                mutated["use_se_blocks"] = not mutated.get("use_se_blocks", False)
             elif field == "pooling":
                 mutated["pooling"] = self._rng.choice(self.search_space["pooling"])
 

@@ -51,9 +51,14 @@ class LLMAgent:
         self.mock_mode = bool(agent_cfg.get("mock_mode", False))
         self.retry_on_invalid = int(agent_cfg.get("retry_on_invalid", 3))
         self.temperature = float(llm_cfg.get("temperature", 0.7))
-        self.max_tokens = int(llm_cfg.get("max_tokens", 1024))
+        self.temperature_min = float(llm_cfg.get("temperature_min", 0.7))
+        self.temperature_decay = float(llm_cfg.get("temperature_decay", 0.0))
+        self.max_tokens = int(llm_cfg.get("max_tokens", 1536))
         self.top_k_memory = int(agent_cfg.get("top_k_memory", 5))
         self.feedback_strategy = str(agent_cfg.get("feedback_strategy", "top_k"))
+        self.diversity_penalty = bool(agent_cfg.get("diversity_penalty", False))
+        self._iteration = 0
+        self._last_predicted_accuracy: float | None = None
 
         if prompt_builder is not None:
             self.prompt_builder = prompt_builder
@@ -102,34 +107,56 @@ class LLMAgent:
         self._client = OpenAI(api_key=api_key, base_url=base_url)
 
     def propose_architecture(self) -> Dict[str, Any]:
-        """Proposes a valid architecture from memory and search constraints.
-
-        Returns:
-            Dict[str, Any]: Valid architecture dictionary.
-        """
+        """Proposes a valid architecture from memory and search constraints."""
         if self.mock_mode:
             return self.generator.sample_random()
 
+        self._iteration += 1
+        self._decay_temperature()
         memory_summary = self._select_memory_summary()
-        prompt = self.prompt_builder.build_proposal_prompt(memory_summary)
+        explored = self._explored_families() if self.diversity_penalty else []
+        prompt = self.prompt_builder.build_proposal_prompt(memory_summary, explored_families=explored)
         return self._generate_valid_architecture(prompt)
 
     def refine_architecture(self, arch: Dict[str, Any], feedback: Dict[str, Any]) -> Dict[str, Any]:
-        """Refines an architecture using metric feedback and memory context.
-
-        Args:
-            arch: Previous architecture to improve.
-            feedback: Training/evaluation metrics for the architecture.
-
-        Returns:
-            Dict[str, Any]: Improved valid architecture.
-        """
+        """Refines an architecture using metric feedback and memory context."""
         if self.mock_mode:
             return self.generator.mutate(arch, num_mutations=2)
 
+        # Attach prediction error so prompt can use retrospective feedback
+        if self._last_predicted_accuracy is not None:
+            actual = float(feedback.get("val_accuracy", 0.0))
+            error = abs(self._last_predicted_accuracy - actual)
+            self.logger.info(
+                "Prediction error: predicted=%.2f%% actual=%.2f%% error=%.2f%%",
+                self._last_predicted_accuracy, actual, error,
+            )
+            feedback = {**feedback, "prediction_error": round(error, 4), "predicted_accuracy": self._last_predicted_accuracy}
+            self._last_predicted_accuracy = None
+
         memory_summary = self._select_memory_summary(reference_metrics=feedback)
-        prompt = self.prompt_builder.build_refinement_prompt(arch, feedback, memory_summary)
+        explored = self._explored_families() if self.diversity_penalty else []
+        prompt = self.prompt_builder.build_refinement_prompt(arch, feedback, memory_summary, explored_families=explored)
         return self._generate_valid_architecture(prompt, fallback_arch=arch)
+
+    def _decay_temperature(self) -> None:
+        """Anneals temperature each iteration down to temperature_min."""
+        if self.temperature_decay > 0:
+            self.temperature = max(
+                self.temperature_min,
+                self.temperature - self.temperature_decay,
+            )
+
+    def _explored_families(self) -> list:
+        """Returns architecture family signatures already heavily explored."""
+        from collections import Counter
+        entries = self.memory.get_all()
+        families = Counter(
+            f"layers={e['arch']['num_layers']} act={e['arch']['activation']} pool={e['arch']['pooling']}"
+            for e in entries
+        )
+        # Flag families seen more than once
+        return [fam for fam, count in families.items() if count > 1]
 
     def _select_memory_summary(
         self,
@@ -301,6 +328,11 @@ class LLMAgent:
                         self.logger.info(
                             "\n=== LLM Reasoning ===\n%s\n=====================", reasoning
                         )
+                    # Extract prediction before stripping wrapper
+                    predicted = parsed.get("predicted_val_accuracy")
+                    if predicted is not None:
+                        self.logger.info("LLM predicted val_accuracy: %.2f%%", float(predicted))
+                        self._last_predicted_accuracy = float(predicted)
                     parsed = parsed["architecture"]
                 return parsed
             except json.JSONDecodeError:

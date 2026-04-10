@@ -24,11 +24,7 @@ class PromptBuilder:
         self.top_k = top_k
 
     def _schema_text(self) -> str:
-        """Returns architecture JSON schema derived from the configured search space.
-
-        Returns:
-            str: Required output schema description.
-        """
+        """Returns the architecture-only JSON schema including all search dimensions."""
         ss = self.search_space.get("search_space", {})
         activation_opts = "|".join(ss.get("activations", ["relu", "gelu", "silu"]))
         pooling_opts = "|".join(ss.get("pooling", ["max", "avg"]))
@@ -42,6 +38,7 @@ class PromptBuilder:
             '  "use_dropout": bool,\n'
             '  "dropout_rate": float,\n'
             '  "use_skip_connections": bool,\n'
+            '  "use_se_blocks": bool,\n'
             f'  "pooling": "{pooling_opts}"\n'
             "}"
         )
@@ -56,24 +53,48 @@ class PromptBuilder:
             '    "changes": "What specific changes are being made and why?",\n'
             '    "risks": "What challenges might this architecture face and how are they mitigated?"\n'
             '  },\n'
+            '  "predicted_val_accuracy": float,\n'
             '  "architecture": ' + self._schema_text() + "\n"
             "}"
         )
 
-    def build_proposal_prompt(self, memory_summary: List[Dict[str, Any]]) -> str:
-        """Builds a prompt requesting a fresh architecture proposal.
+    def _schema_text(self) -> str:
+        """Returns the architecture-only JSON schema."""
+        ss = self.search_space.get("search_space", {})
+        activation_opts = "|".join(ss.get("activations", ["relu", "gelu", "silu"]))
+        pooling_opts = "|".join(ss.get("pooling", ["max", "avg"]))
+        return (
+            "{\n"
+            '  "num_layers": int,\n'
+            '  "filters": [int, ...],\n'
+            '  "kernels": [int, ...],\n'
+            f'  "activation": "{activation_opts}",\n'
+            '  "use_batchnorm": bool,\n'
+            '  "use_dropout": bool,\n'
+            '  "dropout_rate": float,\n'
+            '  "use_skip_connections": bool,\n'
+            '  "use_se_blocks": bool,\n'
+            f'  "pooling": "{pooling_opts}"\n'
+            "}"
+        )
 
-        Args:
-            memory_summary: Top-k compact history entries.
-
-        Returns:
-            str: Full user prompt for architecture proposal.
-        """
+    def build_proposal_prompt(self, memory_summary: List[Dict[str, Any]], explored_families: List[str] | None = None) -> str:
+        """Builds a prompt requesting a fresh architecture proposal."""
         payload = memory_summary[: self.top_k]
+        diversity_note = ""
+        if explored_families:
+            diversity_note = (
+                "\nIMPORTANT — Diversity required: the following architecture families have already been "
+                "heavily explored. You MUST propose something structurally different "
+                "(different num_layers, activation, pooling, use_skip_connections, or use_se_blocks):\n"
+                + "\n".join(f"  - {f}" for f in explored_families)
+                + "\n"
+            )
         return (
             "You are an NAS reasoning agent.\n"
-            "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n\n"
-            "Required output format (respond ONLY with this JSON, no text outside it):\n"
+            "Propose a CNN architecture that is valid and likely to improve validation accuracy.\n"
+            + diversity_note
+            + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"
             "Search space and constraints:\n"
             f"{json.dumps(self.search_space, indent=2)}\n\n"
@@ -86,22 +107,23 @@ class PromptBuilder:
         arch: Dict[str, Any],
         metrics: Dict[str, Any],
         memory_summary: List[Dict[str, Any]],
+        explored_families: List[str] | None = None,
     ) -> str:
-        """Builds a prompt requesting an improved variant of an architecture.
-
-        Args:
-            arch: Current architecture to refine.
-            metrics: Feedback metrics from training/evaluation.
-            memory_summary: Top-k memory records for in-context guidance.
-
-        Returns:
-            str: Full user prompt for refinement.
-        """
+        """Builds a prompt requesting an improved variant of an architecture."""
         payload = memory_summary[: self.top_k]
+        diversity_note = ""
+        if explored_families:
+            diversity_note = (
+                "\nIMPORTANT — Diversity required: the following families are over-explored. "
+                "Try a structurally different architecture:\n"
+                + "\n".join(f"  - {f}" for f in explored_families)
+                + "\n"
+            )
         return (
             "You are an NAS reasoning agent.\n"
-            "Refine the given architecture to improve validation performance while staying valid.\n\n"
-            "Required output format (respond ONLY with this JSON, no text outside it):\n"
+            "Refine the given architecture to improve validation performance while staying valid.\n"
+            + diversity_note
+            + "\nRequired output format (respond ONLY with this JSON, no text outside it):\n"
             f"{self._output_schema_text()}\n\n"
             "Search space and constraints:\n"
             f"{json.dumps(self.search_space, indent=2)}\n\n"

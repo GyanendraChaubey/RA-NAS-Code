@@ -5,13 +5,64 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
 from tqdm import tqdm
 
 from src.evaluation.metrics import accuracy
 from src.training.early_stopping import EarlyStopping
+
+
+# ---------------------------------------------------------------------------
+# Augmentation helpers
+# ---------------------------------------------------------------------------
+
+def cutout(img: torch.Tensor, n_holes: int = 1, length: int = 16) -> torch.Tensor:
+    """Applies CutOut regularisation: randomly masks square patches in a batch.
+
+    Args:
+        img: Float tensor of shape (N, C, H, W), values in [0, 1].
+        n_holes: Number of patches to cut per image.
+        length: Side length of each square patch.
+
+    Returns:
+        torch.Tensor: Augmented tensor with masked regions zeroed out.
+    """
+    h, w = img.size(2), img.size(3)
+    mask = torch.ones_like(img)
+    for _ in range(n_holes):
+        cy = torch.randint(h, (1,)).item()
+        cx = torch.randint(w, (1,)).item()
+        y1 = max(0, cy - length // 2)
+        y2 = min(h, cy + length // 2)
+        x1 = max(0, cx - length // 2)
+        x2 = min(w, cx + length // 2)
+        mask[:, :, y1:y2, x1:x2] = 0.0
+    return img * mask
+
+
+def mixup_batch(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.2,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    """Applies Mixup augmentation to a batch.
+
+    Args:
+        inputs: Input tensor (N, C, H, W).
+        targets: Integer target tensor (N,).
+        alpha: Beta distribution parameter.
+
+    Returns:
+        Tuple of (mixed_inputs, targets_a, targets_b, lam).
+    """
+    lam = float(np.random.beta(alpha, alpha)) if alpha > 0 else 1.0
+    batch_size = inputs.size(0)
+    index = torch.randperm(batch_size, device=inputs.device)
+    mixed = lam * inputs + (1 - lam) * inputs[index]
+    return mixed, targets, targets[index], lam
 
 
 class Trainer:
@@ -51,12 +102,31 @@ class Trainer:
         self.weight_decay = float(training_cfg["weight_decay"])
         self.scheduler_type = str(training_cfg.get("scheduler", "none")).lower()
         self.save_best_only = bool(config["experiment"].get("save_best_only", True))
+        self.warmup_epochs = int(training_cfg.get("warmup_epochs", 5))
 
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
+        # Augmentation flags (on by default, disable in config for ablations)
+        aug_cfg = training_cfg.get("augmentation", {})
+        self.use_cutout = bool(aug_cfg.get("cutout", True))
+        self.cutout_length = int(aug_cfg.get("cutout_length", 16))
+        self.use_mixup = bool(aug_cfg.get("mixup", True))
+        self.mixup_alpha = float(aug_cfg.get("mixup_alpha", 0.2))
+
+        optimizer_type = str(training_cfg.get("optimizer", "sgd")).lower()
+        if optimizer_type == "sgd":
+            self.optimizer = torch.optim.SGD(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                momentum=float(training_cfg.get("momentum", 0.9)),
+                weight_decay=self.weight_decay,
+                nesterov=True,
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
+
         self.criterion = nn.CrossEntropyLoss()
         self.scheduler = self._build_scheduler()
         self.monitor_mode = str(config.get("early_stopping", {}).get("mode", "max"))
@@ -75,6 +145,8 @@ class Trainer:
     def _build_scheduler(self) -> Any:
         """Builds learning-rate scheduler from config.
 
+        Supports cosine annealing with optional linear warmup, step decay, or none.
+
         Returns:
             Any: Scheduler object or None.
 
@@ -83,14 +155,31 @@ class Trainer:
         """
         if self.scheduler_type == "none":
             return None
-        if self.scheduler_type == "cosine":
-            return CosineAnnealingLR(self.optimizer, T_max=self.epochs)
+        if self.scheduler_type in ("cosine", "cosine_warmup"):
+            cosine = CosineAnnealingLR(
+                self.optimizer,
+                T_max=max(1, self.epochs - self.warmup_epochs),
+                eta_min=1e-5,
+            )
+            if self.warmup_epochs > 0:
+                warmup = LinearLR(
+                    self.optimizer,
+                    start_factor=0.01,
+                    end_factor=1.0,
+                    total_iters=self.warmup_epochs,
+                )
+                return SequentialLR(
+                    self.optimizer,
+                    schedulers=[warmup, cosine],
+                    milestones=[self.warmup_epochs],
+                )
+            return cosine
         if self.scheduler_type == "step":
             step_size = max(1, self.epochs // 3)
             return StepLR(self.optimizer, step_size=step_size, gamma=0.5)
         raise ValueError(
             f"Unsupported scheduler '{self.scheduler_type}'. "
-            "Use one of: cosine, step, none."
+            "Use one of: cosine, cosine_warmup, step, none."
         )
 
     def train(self, train_loader: Any, val_loader: Any) -> Dict[str, Any]:
@@ -149,7 +238,7 @@ class Trainer:
         }
 
     def _train_epoch(self, loader: Any) -> Tuple[float, float]:
-        """Runs one training epoch.
+        """Runs one training epoch with optional CutOut and Mixup augmentation.
 
         Args:
             loader: Training dataloader.
@@ -167,9 +256,20 @@ class Trainer:
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
 
+            # CutOut: zero out random square patches
+            if self.use_cutout:
+                inputs = cutout(inputs, n_holes=1, length=self.cutout_length)
+
             self.optimizer.zero_grad(set_to_none=True)
-            outputs = self.model(inputs)
-            loss = self.criterion(outputs, targets)
+
+            if self.use_mixup:
+                mixed, targets_a, targets_b, lam = mixup_batch(inputs, targets, self.mixup_alpha)
+                outputs = self.model(mixed)
+                loss = lam * self.criterion(outputs, targets_a) + (1 - lam) * self.criterion(outputs, targets_b)
+            else:
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
+
             loss.backward()
             self.optimizer.step()
 

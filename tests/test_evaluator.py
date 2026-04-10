@@ -22,6 +22,7 @@ def _simple_arch(num_layers: int = 2) -> dict:
         "use_dropout": False,
         "dropout_rate": 0.0,
         "use_skip_connections": False,
+        "use_se_blocks": False,
         "pooling": "max",
     }
 

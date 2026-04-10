@@ -16,6 +16,7 @@ def _arch_configs():
             "use_dropout": False,
             "dropout_rate": 0.0,
             "use_skip_connections": False,
+        "use_se_blocks": False,
             "pooling": "max",
         },
         {
@@ -27,6 +28,7 @@ def _arch_configs():
             "use_dropout": True,
             "dropout_rate": 0.2,
             "use_skip_connections": True,
+        "use_se_blocks": False,
             "pooling": "avg",
         },
         {
@@ -38,6 +40,7 @@ def _arch_configs():
             "use_dropout": True,
             "dropout_rate": 0.1,
             "use_skip_connections": True,
+        "use_se_blocks": False,
             "pooling": "max",
         },
     ]

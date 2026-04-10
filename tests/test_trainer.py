@@ -50,6 +50,7 @@ def test_trainer_smoke(tmp_path: Path) -> None:
         "use_dropout": False,
         "dropout_rate": 0.0,
         "use_skip_connections": False,
+        "use_se_blocks": False,
         "pooling": "max",
     }
     config = {

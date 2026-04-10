@@ -6,13 +6,14 @@ from typing import Any, Dict, List
 
 SEARCH_SPACE: Dict[str, Any] = {
     "num_layers": {"min": 2, "max": 8},
-    "filters_per_layer": [16, 32, 64, 128, 256],
-    "kernel_sizes": [3, 5],
+    "filters_per_layer": [16, 32, 64, 128, 256, 512],
+    "kernel_sizes": [3, 5, 7],
     "activations": ["relu", "gelu", "silu"],
     "use_batchnorm": [True, False],
     "use_dropout": [True, False],
     "dropout_rate": {"min": 0.0, "max": 0.6},
     "use_skip_connections": [True, False],
+    "use_se_blocks": [True, False],
     "pooling": ["max", "avg"],
 }
 
@@ -68,6 +69,7 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
         "use_dropout",
         "dropout_rate",
         "use_skip_connections",
+        "use_se_blocks",
         "pooling",
     }
     missing = required_keys.difference(arch.keys())
@@ -112,6 +114,7 @@ def validate_architecture(arch: Dict[str, Any], constraints: Dict[str, Any]) -> 
     _assert(isinstance(arch["use_batchnorm"], bool), "use_batchnorm must be a bool.")
     _assert(isinstance(arch["use_dropout"], bool), "use_dropout must be a bool.")
     _assert(isinstance(arch["use_skip_connections"], bool), "use_skip_connections must be a bool.")
+    _assert(isinstance(arch["use_se_blocks"], bool), "use_se_blocks must be a bool.")
     _assert(arch["pooling"] in SEARCH_SPACE["pooling"], f"pooling must be one of {SEARCH_SPACE['pooling']}.")
 
     dropout_rate = float(arch["dropout_rate"])

@@ -10,17 +10,7 @@ import torch.nn.functional as F
 
 
 def _activation(name: str) -> nn.Module:
-    """Returns activation module by name.
-
-    Args:
-        name: Activation identifier.
-
-    Returns:
-        nn.Module: Instantiated activation layer.
-
-    Raises:
-        ValueError: If activation is unsupported.
-    """
+    """Returns activation module by name."""
     mapping = {
         "relu": nn.ReLU(inplace=True),
         "gelu": nn.GELU(),
@@ -31,25 +21,52 @@ def _activation(name: str) -> nn.Module:
     return mapping[name]
 
 
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation block for channel-wise feature recalibration.
+
+    Applies global average pooling to squeeze spatial information, then uses
+    two fully-connected layers to produce per-channel attention weights that
+    are multiplied back onto the feature map (excitation).
+
+    Args:
+        channels: Number of input/output channels.
+        reduction: Reduction ratio for the bottleneck FC layer (default 16).
+    """
+
+    def __init__(self, channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        bottleneck = max(1, channels // reduction)
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(channels, bottleneck, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(bottleneck, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        scale = self.squeeze(x)                    # (N, C, 1, 1)
+        scale = self.excitation(scale)             # (N, C)
+        scale = scale.view(scale.size(0), -1, 1, 1)  # (N, C, 1, 1)
+        return x * scale
+
+
 class DynamicCNN(nn.Module):
     """Constructs a variable-depth CNN from architecture configuration.
 
-    Layer blocks follow Conv2d -> BatchNorm? -> Activation -> Dropout? -> Pool.
+    Layer blocks follow Conv2d -> BatchNorm? -> Activation -> SE? -> Dropout? -> Pool.
     Optional skip connections are applied as residual additions with channel
     alignment and spatial resizing for robustness across variable depths.
     """
 
     def __init__(self, arch_config: Dict[str, Any], num_classes: int) -> None:
-        """Builds a dynamic CNN from architecture dictionary.
-
-        Args:
-            arch_config: Architecture dictionary from NAS.
-            num_classes: Number of target classes.
-        """
+        """Builds a dynamic CNN from architecture dictionary."""
         super().__init__()
         self.arch_config = arch_config
         self.num_layers = int(arch_config["num_layers"])
         self.use_skip_connections = bool(arch_config["use_skip_connections"])
+        self.use_se_blocks = bool(arch_config.get("use_se_blocks", False))
 
         in_channels = 3
         self.blocks = nn.ModuleList()
@@ -71,6 +88,8 @@ class DynamicCNN(nn.Module):
             )
             if arch_config["use_batchnorm"]:
                 block["bn"] = nn.BatchNorm2d(out_channels)
+            if self.use_se_blocks:
+                block["se"] = SEBlock(out_channels)
             if arch_config["use_dropout"]:
                 block["drop"] = nn.Dropout2d(float(arch_config["dropout_rate"]))
 
@@ -131,6 +150,8 @@ class DynamicCNN(nn.Module):
             if "bn" in block:
                 out = block["bn"](out)
             out = block["act"](out)
+            if "se" in block:
+                out = block["se"](out)
             if "drop" in block:
                 out = block["drop"](out)
             out = block["pool"](out)

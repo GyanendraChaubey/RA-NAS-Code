@@ -18,6 +18,7 @@ def test_memory_top_k_and_roundtrip(tmp_path: Path) -> None:
             "use_dropout": False,
             "dropout_rate": 0.0,
             "use_skip_connections": False,
+        "use_se_blocks": False,
             "pooling": "max",
         }
         metrics = {"val_accuracy": float(idx), "val_loss": 10.0 - idx}

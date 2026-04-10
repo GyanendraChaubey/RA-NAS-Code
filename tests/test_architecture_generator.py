@@ -28,6 +28,7 @@ def _valid_base_arch() -> dict:
         "use_dropout": False,
         "dropout_rate": 0.0,
         "use_skip_connections": False,
+        "use_se_blocks": False,
         "pooling": "max",
     }
 
