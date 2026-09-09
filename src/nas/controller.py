@@ -129,7 +129,8 @@ class NASController:
             candidate_arch = self.agent.refine_architecture(arch=arch, feedback=combined_metrics)
             self.generator.validate(candidate_arch)
 
-            record = {"iteration": iteration, "arch": arch, "metrics": combined_metrics}
+            cost_summary = self.agent.get_cost_summary() if hasattr(self.agent, "get_cost_summary") else {}
+            record = {"iteration": iteration, "arch": arch, "metrics": combined_metrics, "cost": cost_summary}
             self.results.append(record)
             self._log_iteration(iteration=iteration, arch=arch, metrics=combined_metrics)
             self.logger.info("Completed NAS iteration %d/%d", iteration, num_iterations)

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
 from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
-from torchvision.transforms import RandAugment
+from torchvision.transforms import v2 as transforms_v2
 from tqdm import tqdm
 
 from src.evaluation.metrics import accuracy
@@ -114,7 +114,9 @@ class Trainer:
         self.mixup_alpha = float(aug_cfg.get("mixup_alpha", 0.2))
         self.use_randaugment = bool(aug_cfg.get("randaugment", True))
         if self.use_randaugment:
-            self._randaugment = RandAugment(num_ops=2, magnitude=9)
+            # v2 applies one random op+magnitude to the whole batch per call (vectorized);
+            # replaces a per-image Python loop that dominated per-epoch wall-clock time.
+            self._randaugment = transforms_v2.RandAugment(num_ops=2, magnitude=9)
         else:
             self._randaugment = None
 
@@ -293,11 +295,10 @@ class Trainer:
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
 
-            # RandAugment (applied per-sample on the GPU tensor batch)
+            # RandAugment expects uint8 tensors; convert, augment, reconvert
             if self._randaugment is not None:
-                # RandAugment expects uint8 tensors; convert, augment, reconvert
                 imgs_u8 = (inputs * 255).clamp(0, 255).byte()
-                imgs_u8 = torch.stack([self._randaugment(img) for img in imgs_u8])
+                imgs_u8 = self._randaugment(imgs_u8)
                 inputs = imgs_u8.float() / 255.0
 
             # CutOut: zero out random square patches

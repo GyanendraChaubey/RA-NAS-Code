@@ -103,3 +103,65 @@ def test_trainer_smoke(tmp_path: Path) -> None:
     losses = [float(epoch["train_loss"]) for epoch in metrics["history"]]
     assert losses[-1] <= losses[0] + 1e-6
 
+
+def test_trainer_randaugment_batch_path(tmp_path: Path) -> None:
+    """Runs one epoch with randaugment=True to exercise the vectorized batch path."""
+    arch = {
+        "num_layers": 2,
+        "filters": [64, 128],
+        "kernels": [3, 3],
+        "block_depths": [1, 1],
+        "activation": "relu",
+        "use_batchnorm": True,
+        "use_dropout": False,
+        "dropout_rate": 0.0,
+        "use_skip_connections": True,
+        "use_se_blocks": False,
+        "pooling": "avg",
+    }
+    config = {
+        "training": {
+            "epochs": 1,
+            "batch_size": 32,
+            "learning_rate": 0.01,
+            "momentum": 0.9,
+            "weight_decay": 1e-4,
+            "optimizer": "sgd",
+            "scheduler": "none",
+            "warmup_epochs": 0,
+            "seed": 42,
+            "augmentation": {
+                "cutout": False,
+                "mixup": False,
+                "randaugment": True,
+            },
+            "swa": {"enabled": False},
+        },
+        "early_stopping": {
+            "enabled": False,
+            "patience": 5,
+            "monitor": "val_accuracy",
+            "mode": "max",
+        },
+        "experiment": {
+            "save_best_only": False,
+        },
+    }
+
+    model = build_model(arch_config=arch, num_classes=2, device="cpu")
+    logger = get_logger(name="test_trainer_randaugment", log_dir=str(tmp_path))
+    trainer = Trainer(
+        model=model,
+        config=config,
+        device="cpu",
+        experiment_dir=tmp_path,
+        logger=logger,
+    )
+
+    dataset = EasyBinaryDataset(size=64, seed=42)
+    train_loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(dataset, batch_size=32, shuffle=False)
+
+    metrics = trainer.train(train_loader=train_loader, val_loader=val_loader)
+    assert len(metrics["history"]) == 1
+

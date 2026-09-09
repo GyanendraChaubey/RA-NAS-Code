@@ -1,0 +1,8 @@
+# Phase 5 ablation: the LLM is never asked to predict val_accuracy, and no
+# prediction-error feedback is attached on refinement.
+# mock_mode is forced false — this must be a real LLM-driven run to mean anything.
+agent:
+  mock_mode: false
+  self_correction: false
+experiment:
+  name: ablation_no_self_correction

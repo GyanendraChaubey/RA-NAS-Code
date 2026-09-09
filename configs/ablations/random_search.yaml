@@ -1,0 +1,9 @@
+# Random-search baseline: every iteration samples a fresh random architecture with
+# no LLM involved (mock_mode=true + explore_every=1 forces propose_architecture()
+# every iteration, which is a pure ArchitectureGenerator.sample_random() call in mock
+# mode). Zero LLM cost — see README's Ablation Study Guide, item 1.
+agent:
+  mock_mode: true
+  explore_every: 1
+experiment:
+  name: ablation_random_search

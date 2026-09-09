@@ -57,8 +57,18 @@ class LLMAgent:
         self.top_k_memory = int(agent_cfg.get("top_k_memory", 5))
         self.feedback_strategy = str(agent_cfg.get("feedback_strategy", "top_k"))
         self.diversity_penalty = bool(agent_cfg.get("diversity_penalty", False))
+        self.self_correction = bool(agent_cfg.get("self_correction", True))
         self._iteration = 0
         self._last_predicted_accuracy: float | None = None
+
+        # Cost/usage accounting (Phase 5 evidence: accuracy-per-compute-dollar).
+        pricing_cfg = llm_cfg.get("pricing", {})
+        self.input_price_per_million = float(pricing_cfg.get("input_per_million_usd", 0.0))
+        self.output_price_per_million = float(pricing_cfg.get("output_per_million_usd", 0.0))
+        self.total_llm_calls = 0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_llm_latency_s = 0.0
 
         if prompt_builder is not None:
             self.prompt_builder = prompt_builder
@@ -67,7 +77,9 @@ class LLMAgent:
                 "search_space": self.generator.search_space,
                 "constraints": self.generator.constraints,
             }
-            self.prompt_builder = PromptBuilder(prompt_space, top_k=self.top_k_memory)
+            self.prompt_builder = PromptBuilder(
+                prompt_space, top_k=self.top_k_memory, self_correction=self.self_correction
+            )
 
         self._client = None
         self._model = str(llm_cfg.get("model", "gpt-4o"))
@@ -148,13 +160,22 @@ class LLMAgent:
             )
 
     def _explored_families(self) -> list:
-        """Returns architecture family signatures already heavily explored."""
+        """Returns architecture family signatures already heavily explored.
+
+        Uses the ResNet-space grouping (layers/activation/pooling) when those
+        keys are present; falls back to the raw architecture dict for other
+        search spaces (e.g. NAS-Bench-201 cells), so diversity penalty works
+        regardless of which architecture schema the agent is driving.
+        """
         from collections import Counter
         entries = self.memory.get_all()
-        families = Counter(
-            f"layers={e['arch']['num_layers']} act={e['arch']['activation']} pool={e['arch']['pooling']}"
-            for e in entries
-        )
+
+        def family_key(arch: Dict[str, Any]) -> str:
+            if {"num_layers", "activation", "pooling"} <= arch.keys():
+                return f"layers={arch['num_layers']} act={arch['activation']} pool={arch['pooling']}"
+            return json.dumps(arch, sort_keys=True)
+
+        families = Counter(family_key(e["arch"]) for e in entries)
         # Flag families seen more than once
         return [fam for fam, count in families.items() if count > 1]
 
@@ -263,12 +284,14 @@ class LLMAgent:
         last_error: Exception | None = None
         for sleep_seconds in backoff_seconds:
             try:
+                start_time = time.perf_counter()
                 completion = self._client.chat.completions.create(
                     model=self._model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                 )
+                self._record_usage(completion, elapsed_s=time.perf_counter() - start_time)
                 content = completion.choices[0].message.content
                 if isinstance(content, list):
                     # Defensive handling for structured SDK content variants.
@@ -283,6 +306,55 @@ class LLMAgent:
                 time.sleep(sleep_seconds)
 
         raise RuntimeError(f"LLM call failed after retries: {last_error}")
+
+    def _record_usage(self, completion: Any, elapsed_s: float) -> None:
+        """Accumulates token usage, latency, and estimated cost for one LLM call.
+
+        Args:
+            completion: Raw completion object returned by the OpenAI-compatible client.
+            elapsed_s: Wall-clock seconds spent waiting on the API call.
+        """
+        usage = getattr(completion, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+
+        self.total_llm_calls += 1
+        self.total_prompt_tokens += prompt_tokens
+        self.total_completion_tokens += completion_tokens
+        self.total_llm_latency_s += elapsed_s
+
+        self.logger.info(
+            "LLM call: %d prompt + %d completion tokens, %.2fs latency, cumulative cost=$%.4f",
+            prompt_tokens,
+            completion_tokens,
+            elapsed_s,
+            self.estimated_cost_usd(),
+        )
+
+    def estimated_cost_usd(self) -> float:
+        """Estimates cumulative LLM spend from tracked token usage and configured pricing.
+
+        Returns:
+            float: Estimated USD cost across all calls made by this agent instance.
+        """
+        return (
+            self.total_prompt_tokens / 1_000_000 * self.input_price_per_million
+            + self.total_completion_tokens / 1_000_000 * self.output_price_per_million
+        )
+
+    def get_cost_summary(self) -> Dict[str, Any]:
+        """Returns cumulative LLM usage/cost accounting for this agent instance.
+
+        Returns:
+            Dict[str, Any]: Call count, token totals, latency, and estimated USD cost.
+        """
+        return {
+            "total_llm_calls": self.total_llm_calls,
+            "total_prompt_tokens": self.total_prompt_tokens,
+            "total_completion_tokens": self.total_completion_tokens,
+            "total_llm_latency_s": round(self.total_llm_latency_s, 3),
+            "estimated_cost_usd": round(self.estimated_cost_usd(), 6),
+        }
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """Extracts and parses an architecture JSON object from model text.
@@ -330,7 +402,7 @@ class LLMAgent:
                         )
                     # Extract prediction before stripping wrapper
                     predicted = parsed.get("predicted_val_accuracy")
-                    if predicted is not None:
+                    if predicted is not None and self.self_correction:
                         self.logger.info("LLM predicted val_accuracy: %.2f%%", float(predicted))
                         self._last_predicted_accuracy = float(predicted)
                     parsed = parsed["architecture"]

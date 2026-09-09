@@ -1,12 +1,15 @@
 llm:
   provider: groq
-  model: llama-3.3-70b-versatile
+  model: openai/gpt-oss-120b
   base_url: https://api.groq.com/openai/v1
   temperature: 1.2
   temperature_min: 0.7
   temperature_decay: 0.05
   max_tokens: 1536
   api_key_env: GROQ_API_KEY
+  pricing:
+    input_per_million_usd: 0.14
+    output_per_million_usd: 0.68
 
 agent:
   max_iterations: 20
@@ -16,4 +19,5 @@ agent:
   mock_mode: true
   explore_every: 2
   diversity_penalty: true
+  self_correction: true
 

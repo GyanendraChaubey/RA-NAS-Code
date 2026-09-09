@@ -43,6 +43,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-config", type=str, default="configs/agent.yaml")
     parser.add_argument("--iterations", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument(
+        "--override",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Additional YAML files merged on top of --train-config/--agent-config, in "
+        "order (later files win). Use for ablations, e.g. configs/ablations/no_diversity_penalty.yaml.",
+    )
     return parser.parse_args()
 
 
@@ -193,7 +201,8 @@ def main() -> None:
     args = parse_args()
     train_config = load_config(args.train_config)
     agent_config = load_config(args.agent_config)
-    merged_config = merge_configs(train_config, agent_config)
+    override_configs = [load_config(path) for path in args.override]
+    merged_config = merge_configs(train_config, agent_config, *override_configs)
 
     seed = int(merged_config["training"]["seed"])
     seed_everything(seed)

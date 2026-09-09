@@ -113,11 +113,11 @@ def test_run_returns_correct_number_of_records(tmp_path: Path) -> None:
 
 
 def test_run_record_keys(tmp_path: Path) -> None:
-    """Each record must contain 'iteration', 'arch', and 'metrics' keys."""
+    """Each record must contain 'iteration', 'arch', 'metrics', and 'cost' keys."""
     ctrl = _build_controller(tmp_path)
     results = ctrl.run(num_iterations=1)
     record = results[0]
-    assert set(record.keys()) == {"iteration", "arch", "metrics"}
+    assert set(record.keys()) == {"iteration", "arch", "metrics", "cost"}
 
 
 def test_run_iteration_indices_are_sequential(tmp_path: Path) -> None:

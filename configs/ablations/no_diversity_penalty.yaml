@@ -1,0 +1,8 @@
+# Phase 3 ablation: disables the diversity-penalty prompt injection
+# (LLMAgent._explored_families / PromptBuilder diversity_note).
+# mock_mode is forced false — this must be a real LLM-driven run to mean anything.
+agent:
+  mock_mode: false
+  diversity_penalty: false
+experiment:
+  name: ablation_no_diversity_penalty

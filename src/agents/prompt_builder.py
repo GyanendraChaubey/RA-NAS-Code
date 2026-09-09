@@ -13,15 +13,18 @@ class PromptBuilder:
     across LLM providers while preserving RA-NAS prompt semantics.
     """
 
-    def __init__(self, search_space: Dict[str, Any], top_k: int) -> None:
+    def __init__(self, search_space: Dict[str, Any], top_k: int, self_correction: bool = True) -> None:
         """Initializes prompt builder.
 
         Args:
             search_space: Search-space dictionary including constraints.
             top_k: Number of memory entries to include in prompts.
+            self_correction: If True, ask the LLM for a predicted val_accuracy
+                so prediction error can be fed back on refinement (Phase 5).
         """
         self.search_space = search_space
         self.top_k = top_k
+        self.self_correction = self_correction
 
     def _schema_text(self) -> str:
         """Returns the architecture-only JSON schema including all search dimensions."""
@@ -45,6 +48,7 @@ class PromptBuilder:
 
     def _output_schema_text(self) -> str:
         """Returns the full response schema including structured reasoning wrapper."""
+        prediction_field = '  "predicted_val_accuracy": float,\n' if self.self_correction else ""
         return (
             "{\n"
             '  "reasoning": {\n'
@@ -53,8 +57,8 @@ class PromptBuilder:
             '    "changes": "What specific changes are being made and why (filters, block_depths, kernels, SE)?",\n'
             '    "risks": "What challenges might this architecture face and how are they mitigated?"\n'
             '  },\n'
-            '  "predicted_val_accuracy": float,\n'
-            '  "architecture": ' + self._schema_text() + "\n"
+            + prediction_field
+            + '  "architecture": ' + self._schema_text() + "\n"
             "}"
         )
 

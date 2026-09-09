@@ -1,0 +1,9 @@
+# Phase 4 ablation (main CIFAR-10 track): disables multi-fidelity screening —
+# every architecture is trained for the full training.epochs budget directly.
+# mock_mode is forced false — this must be a real LLM-driven run to mean anything.
+agent:
+  mock_mode: false
+training:
+  screening_epochs: 0
+experiment:
+  name: ablation_no_multi_fidelity

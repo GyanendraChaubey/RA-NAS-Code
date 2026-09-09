@@ -1,0 +1,24 @@
+# NAS-Bench-201 / NATS-Bench (topology search space) secondary benchmark track.
+# Runs the same LLMAgent (and its ablation toggles) against a precomputed,
+# reproducible lookup table instead of real training — see
+# scripts/run_nasbench201.py and the README section "NAS-Bench-201 track".
+nasbench201:
+  # Path to the downloaded NATS-tss benchmark file/archive (see
+  # https://github.com/D-X-Y/NATS-Bench#preparation-and-download).
+  # null = look it up under $TORCH_HOME.
+  api_file: null
+  # cifar10-valid: search on the held-out validation split, report test-accuracy
+  # on the true CIFAR-10 test set (standard NAS-search protocol).
+  dataset: cifar10-valid
+  fast_mode: true
+  verbose: false
+  # Multi-fidelity screening epoch budgets recognised by NATS-Bench.
+  screen_hp: "12"
+  full_hp: "200"
+  # true: pair iterations, screen both at screen_hp, only query full_hp for the winner.
+  # false: every iteration is queried directly at full_hp (no screening).
+  screening_enabled: true
+
+experiment:
+  name: nasbench201_run
+  output_dir: ./experiments

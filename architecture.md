@@ -10,7 +10,7 @@
 
 RA-NAS is an LLM-guided Neural Architecture Search system. An LLM reasoning agent iteratively proposes and refines CNN architectures that are trained and evaluated on CIFAR-10. Results are stored in a memory module that provides in-context few-shot examples back to the LLM, closing a propose → train → evaluate → remember feedback loop.
 
-**LLM Provider**: Groq (`llama-3.3-70b-versatile` via OpenAI-compatible API). Configurable to any OpenAI-compatible provider via `configs/agent.yaml`.
+**LLM Provider**: Groq (`openai/gpt-oss-120b` via OpenAI-compatible API). Configurable to any OpenAI-compatible provider via `configs/agent.yaml`.
 
 Five research phases are fully implemented:
 
@@ -253,6 +253,26 @@ Deep merge correct. `yaml.safe_dump` used throughout — correct security practi
 - **Fixed**: Removed `runtime_config = merge_configs(...)` anti-pattern that deep-copied non-serialisable objects (`DataLoader`, `Logger`). `NASController` now receives all runtime values as explicit keyword arguments.
 - **Fixed**: `memory.save()` is now called inside the controller loop after every iteration — the post-experiment call in `main()` remains as a final flush.
 
+### 2.15 `src/nasbench201/` — NAS-Bench-201 secondary benchmark track ✅
+
+- Second, parallel search space/prompt/evaluation stack for the NAS-Bench-201 topology cell
+  (4 nodes, 6 edges, 5 ops/edge), entry point `scripts/run_nasbench201.py`.
+- `search_space.py`: op set, `ops_to_arch_str` (NATS-Bench genotype string encoding), `validate_ops`.
+- `generator.py`: `NB201ArchitectureGenerator` — `sample_random`/`mutate`/`validate`, structurally
+  identical interface to `ArchitectureGenerator` so it plugs into `LLMAgent` unmodified.
+- `prompt_builder.py`: `NB201PromptBuilder` — same reasoning-schema contract as `PromptBuilder`
+  (including the `self_correction` toggle), injected into `LLMAgent(prompt_builder=...)`.
+- `benchmark.py`: `NATSBenchLookup` — wraps `nats_bench.create(..., "tss", ...)`; `evaluate(arch, hp)`
+  replaces real training with an instant lookup at a given epoch budget (`"12"` or `"200"`),
+  making multi-fidelity screening exact rather than approximated.
+- **Fixed** (generalization, not a bug in the ResNet track): `LLMAgent._explored_families()` was
+  hardcoded to `num_layers`/`activation`/`pooling` keys and would `KeyError` on the NB201 `{"ops":
+  [...]}` schema. It now falls back to a full-arch-dict signature when those keys are absent, so
+  `diversity_penalty` works on both search spaces without touching the ResNet-track behavior.
+- Reuses `LLMAgent`, `ExperimentMemory` unmodified; does not reuse `NASController` (its
+  trainer/evaluator/model-building flow doesn't apply to lookup-based evaluation) — `run()` in
+  `scripts/run_nasbench201.py` is a parallel loop mirroring `NASController.run()`'s structure.
+
 ---
 
 ## 3. LLM Provider Configuration
@@ -262,7 +282,7 @@ The system uses the `openai` Python package as a unified client for any compatib
 | Config key | Purpose |
 |---|---|
 | `llm.provider` | `openai` or `groq` (validated at startup) |
-| `llm.model` | Model name passed to the API (e.g. `llama-3.3-70b-versatile`, `gpt-4o`) |
+| `llm.model` | Model name passed to the API (e.g. `openai/gpt-oss-120b`, `gpt-4o`) |
 | `llm.base_url` | Optional API base URL override (required for Groq: `https://api.groq.com/openai/v1`) |
 | `llm.temperature` | Initial sampling temperature (annealed each iteration by `temperature_decay`) |
 | `llm.temperature_min` | Floor temperature after annealing |
@@ -273,7 +293,7 @@ Current `configs/agent.yaml`:
 ```yaml
 llm:
   provider: groq
-  model: llama-3.3-70b-versatile
+  model: openai/gpt-oss-120b
   base_url: https://api.groq.com/openai/v1
   temperature: 1.2
   temperature_min: 0.7
@@ -292,7 +312,7 @@ python3 scripts/run_experiment.py
 
 ## 4. Test Coverage
 
-**52 tests — all passing.**
+**76 tests — all passing.**
 
 | Test File | Tests | What is covered |
 |-----------|-------|-----------------|
@@ -304,6 +324,8 @@ python3 scripts/run_experiment.py
 | `test_early_stopping.py` | 12 | max/min modes, patience boundary, `reset()` reuse, invalid mode, missing metric |
 | `test_evaluator.py` | 11 | Required keys, correct types, accuracy range, top5≥top1, FLOPs/params positive, perfect/worst-case accuracy, deeper model has more params+FLOPs |
 | `test_nas_controller.py` | 11 | Correct number of records, sequential indices, expected metric keys, valid archs, iteration dirs created, checkpoint saved, memory saved per iteration, memory is valid JSON, exploration triggers fresh propose, no exploration when disabled |
+| `test_llm_agent.py` | 8 | `self_correction` schema toggle, prediction captured/ignored per toggle, prediction reset before reuse on refine, cost/token accounting accumulation and zero-pricing default |
+| `test_nasbench201.py` | 16 | `ops_to_arch_str` format + validation errors, generator reproducibility/validity/mutation, prompt schema toggle + diversity note, `NATSBenchLookup` field mapping and hp-routing (`nats_bench` mocked out, no real API/data file needed) |
 
 ---
 

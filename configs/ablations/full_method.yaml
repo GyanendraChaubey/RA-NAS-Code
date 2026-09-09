@@ -1,0 +1,9 @@
+# Ablation control: every phase enabled (matches configs/train.yaml + configs/agent.yaml
+# defaults). Named explicitly so it lands in experiments/ alongside the other ablation
+# runs and shows up as the baseline row in scripts/aggregate_results.py's summary table.
+# mock_mode is forced false here — this must be a real LLM-driven run to mean anything,
+# regardless of what configs/agent.yaml's own default currently is.
+agent:
+  mock_mode: false
+experiment:
+  name: ablation_full_method
